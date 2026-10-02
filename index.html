@@ -237,18 +237,21 @@ let vibeInterval = null;
 function startVibration(){
   if(!('vibrate' in navigator) || vibeInterval) return;
   const pattern = [800, 150, 800, 150, 800, 150, 800, 150]; // buzz-pause pattern
-  navigator.vibrate(pattern);
-  // most browsers cap a single vibrate call, so keep re-firing the pattern
-  // for as long as the page stays open
-  vibeInterval = setInterval(()=>navigator.vibrate(pattern), 4000);
+  // navigator.vibrate() returns false if the browser refused the call
+  // (e.g. no real user gesture yet) — only lock it in once it actually succeeds,
+  // otherwise keep letting later taps retry
+  const ok = navigator.vibrate(pattern);
+  if(ok){
+    vibeInterval = setInterval(()=>navigator.vibrate(pattern), 4000);
+  }
 }
 function stopVibration(){
   if(vibeInterval){ clearInterval(vibeInterval); vibeInterval = null; }
   if('vibrate' in navigator) navigator.vibrate(0);
 }
 window.addEventListener('load', startVibration);
-document.addEventListener('click', startVibration, {once:true});
-document.addEventListener('touchstart', startVibration, {once:true});
+document.addEventListener('click', startVibration);
+document.addEventListener('touchstart', startVibration);
 window.addEventListener('beforeunload', stopVibration);
 window.addEventListener('pagehide', stopVibration);
 
