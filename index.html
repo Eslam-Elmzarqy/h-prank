@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>...</title>
+<style>
+  :root{
+    --bg:#050705;
+    --green:#39ff6a;
+    --green-dim:#0f5c28;
+    --red:#ff1f3d;
+    --amber:#ffb020;
+    --white:#eafff0;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{
+    background:var(--bg);
+    height:100%;
+    overflow:hidden;
+    font-family:'Courier New', monospace;
+    color:var(--green);
+  }
+  #stage{
+    position:fixed; inset:0;
+    display:flex; align-items:center; justify-content:center;
+    flex-direction:column;
+    text-align:center;
+    padding:24px;
+  }
+
+  /* ---- scanlines + flicker over everything ---- */
+  #scanlines{
+    position:fixed; inset:0; pointer-events:none; z-index:50;
+    background:repeating-linear-gradient(
+      to bottom,
+      rgba(0,0,0,0) 0px,
+      rgba(0,0,0,0.15) 1px,
+      rgba(0,0,0,0) 2px
+    );
+    mix-blend-mode:overlay;
+    opacity:0.6;
+  }
+  #flash{
+    position:fixed; inset:0; background:var(--red);
+    opacity:0; pointer-events:none; z-index:40;
+  }
+
+  /* ---- terminal phase ---- */
+  #term{
+    width:100%;
+    max-width:640px;
+    text-align:left;
+    direction:ltr;
+    font-size:15px;
+    line-height:1.6;
+    white-space:pre-wrap;
+    word-break:break-word;
+  }
+  #term .line{opacity:0;}
+  #cursor{display:inline-block; width:8px; background:var(--green); animation:blink 0.9s steps(1) infinite;}
+  @keyframes blink{50%{opacity:0;}}
+
+  /* ---- warning triangle ---- */
+  #warn{
+    font-size:70px;
+    margin-bottom:18px;
+    color:var(--amber);
+    filter:drop-shadow(0 0 12px rgba(255,176,32,.6));
+    animation:pulse 0.6s ease-in-out infinite;
+  }
+  @keyframes pulse{0%,100%{transform:scale(1);}50%{transform:scale(1.08);}}
+
+  #bigmsg{
+    font-size:clamp(22px,6vw,40px);
+    font-weight:700;
+    color:var(--red);
+    letter-spacing:1px;
+    margin-bottom:10px;
+    text-shadow:0 0 10px rgba(255,31,61,.7);
+  }
+  #submsg{
+    font-size:clamp(14px,3.6vw,18px);
+    color:var(--white);
+    opacity:.9;
+    margin-bottom:24px;
+  }
+  #sig{
+    direction:ltr;
+    font-family:'Courier New', monospace;
+    font-size:clamp(13px,3.4vw,16px);
+    letter-spacing:2px;
+    color:var(--green);
+    opacity:.85;
+    margin-bottom:18px;
+    text-shadow:0 0 8px rgba(57,255,106,.6);
+  }
+
+  #barwrap{
+    width:100%; max-width:420px;
+    height:22px;
+    border:2px solid var(--red);
+    border-radius:4px;
+    overflow:hidden;
+    background:rgba(255,31,61,.08);
+    margin-bottom:10px;
+  }
+  #bar{
+    height:100%; width:0%;
+    background:repeating-linear-gradient(45deg, var(--red), var(--red) 10px, #7a0f1e 10px, #7a0f1e 20px);
+  }
+  #pct{font-size:13px; color:var(--red); letter-spacing:2px;}
+
+  .shake{animation:shake 0.35s infinite;}
+  @keyframes shake{
+    0%{transform:translate(0,0);}
+    25%{transform:translate(2px,-2px);}
+    50%{transform:translate(-2px,2px);}
+    75%{transform:translate(2px,2px);}
+    100%{transform:translate(-2px,-2px);}
+  }
+  .glitch{
+    animation:glitchmove 0.15s infinite;
+  }
+  @keyframes glitchmove{
+    0%{transform:translate(0,0); filter:hue-rotate(0deg);}
+    50%{transform:translate(-1px,1px); filter:hue-rotate(20deg);}
+    100%{transform:translate(1px,-1px); filter:hue-rotate(-20deg);}
+  }
+
+  #tapstart{
+    position:fixed; inset:0;
+    background:#000; color:var(--green);
+    display:flex; align-items:center; justify-content:center;
+    font-size:18px; letter-spacing:1px; z-index:100;
+    cursor:pointer;
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    .shake, .glitch, #warn{animation:none !important;}
+  }
+</style>
+</head>
+<body>
+
+<div id="tapstart">اضغط في أي مكان عشان تبدأ 😏</div>
+<div id="scanlines"></div>
+<div id="flash"></div>
+
+<div id="stage">
+  <div id="term"></div>
+
+  <div id="warn" style="display:none;">⚠</div>
+  <div id="bigmsg" style="display:none;"></div>
+  <div id="sig" style="display:none;">Hacked By Eslam Elmzarqi</div>
+  <div id="submsg" style="display:none;"></div>
+  <div id="barwrap" style="display:none;"><div id="bar"></div></div>
+  <div id="pct" style="display:none;">0%</div>
+
+</div>
+
+<script>
+const tapstart = document.getElementById('tapstart');
+const stage = document.getElementById('stage');
+const term = document.getElementById('term');
+const warn = document.getElementById('warn');
+const bigmsg = document.getElementById('bigmsg');
+const sig = document.getElementById('sig');
+const submsg = document.getElementById('submsg');
+const barwrap = document.getElementById('barwrap');
+const bar = document.getElementById('bar');
+const pct = document.getElementById('pct');
+const flash = document.getElementById('flash');
+
+let audioCtx = null;
+let sirenNodes = null;
+let sirenRunning = false;
+
+function startSiren(){
+  if(sirenRunning) return;
+  try{
+    if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if(audioCtx.state === 'suspended') audioCtx.resume();
+
+    const masterGain = audioCtx.createGain();
+    masterGain.gain.value = 0.5;
+    masterGain.connect(audioCtx.destination);
+
+    // two harsh detuned square oscillators for an aggressive siren tone
+    const osc1 = audioCtx.createOscillator();
+    const osc2 = audioCtx.createOscillator();
+    osc1.type = 'square';
+    osc2.type = 'square';
+    osc2.detune.value = 12;
+
+    const oscGain = audioCtx.createGain();
+    oscGain.gain.value = 0.6;
+    osc1.connect(oscGain);
+    osc2.connect(oscGain);
+    oscGain.connect(masterGain);
+
+    osc1.start();
+    osc2.start();
+
+    const now = audioCtx.currentTime;
+    // fast aggressive frequency sweep, looped for as long as the page stays open
+    let t = now;
+    let up = true;
+    osc1.frequency.setValueAtTime(700, t);
+    osc2.frequency.setValueAtTime(700, t);
+
+    const sweep = setInterval(()=>{
+      const cur = audioCtx.currentTime;
+      const target = up ? 1400 : 500;
+      osc1.frequency.linearRampToValueAtTime(target, cur + 0.15);
+      osc2.frequency.linearRampToValueAtTime(target, cur + 0.15);
+      up = !up;
+    }, 150);
+
+    sirenNodes = {osc1, osc2, sweep, masterGain};
+    sirenRunning = true;
+  }catch(e){ /* audio blocked by browser, will retry on first tap */ }
+}
+
+function stopSiren(){
+  if(!sirenRunning || !sirenNodes) return;
+  try{
+    clearInterval(sirenNodes.sweep);
+    sirenNodes.osc1.stop();
+    sirenNodes.osc2.stop();
+  }catch(e){}
+  sirenRunning = false;
+}
+
+// try to start immediately when the page loads
+window.addEventListener('load', startSiren);
+// most mobile browsers block audio without a tap first — this catches the
+// very first touch/click anywhere on the page as a fallback
+document.addEventListener('click', startSiren, {once:true});
+document.addEventListener('touchstart', startSiren, {once:true});
+
+// ---- long continuous vibration (Android Chrome only — iOS Safari does not support the Vibration API) ----
+let vibeInterval = null;
+function startVibration(){
+  if(!('vibrate' in navigator) || vibeInterval) return;
+  const pattern = [800, 150, 800, 150, 800, 150, 800, 150]; // buzz-pause pattern
+  navigator.vibrate(pattern);
+  // most browsers cap a single vibrate call, so keep re-firing the pattern
+  // for as long as the page stays open
+  vibeInterval = setInterval(()=>navigator.vibrate(pattern), 4000);
+}
+function stopVibration(){
+  if(vibeInterval){ clearInterval(vibeInterval); vibeInterval = null; }
+  if('vibrate' in navigator) navigator.vibrate(0);
+}
+window.addEventListener('load', startVibration);
+document.addEventListener('click', startVibration, {once:true});
+document.addEventListener('touchstart', startVibration, {once:true});
+window.addEventListener('beforeunload', stopVibration);
+window.addEventListener('pagehide', stopVibration);
+
+const lines = [
+  "> initializing system diagnostic...",
+  "> scanning storage: /system/",
+  "> WARNING: unauthorized process detected [PID 6684]",
+  "> attempting to isolate... FAILED",
+  "> memory integrity check... 12% CORRUPTED",
+  "> connecting to unknown host 185.x.x.x ...",
+  "> uploading device data ██████░░░░ 61%",
+  "> ALERT: camera access requested",
+  "> ALERT: contacts access requested",
+  "> critical failure in kernel module",
+];
+
+function typeLines(cb){
+  let i = 0;
+  function nextLine(){
+    if(i >= lines.length){ cb(); return; }
+    const div = document.createElement('div');
+    div.className = 'line';
+    div.style.opacity = 1;
+    term.appendChild(div);
+    let text = lines[i];
+    let j = 0;
+    const speed = 12 + Math.random()*10;
+    function typeChar(){
+      if(j <= text.length){
+        div.textContent = text.slice(0,j);
+        j++;
+        setTimeout(typeChar, speed);
+      } else {
+        i++;
+        setTimeout(nextLine, 90);
+      }
+    }
+    typeChar();
+  }
+  nextLine();
+}
+
+function startPrank(){
+  tapstart.style.display = 'none';
+
+  typeLines(()=>{
+    term.style.display = 'none';
+    warn.style.display = 'block';
+    bigmsg.style.display = 'block';
+    sig.style.display = 'block';
+    submsg.style.display = 'block';
+    barwrap.style.display = 'block';
+    pct.style.display = 'block';
+
+    bigmsg.textContent = 'تحذير: تم اختراق الجهاز';
+    submsg.textContent = 'جاري حذف كل البيانات... متطفيش الشاشة';
+
+    document.body.classList.add('shake');
+    bigmsg.classList.add('glitch');
+
+    let flashOn = true;
+    const flashInterval = setInterval(()=>{
+      flash.style.opacity = flashOn ? 0.12 : 0;
+      flashOn = !flashOn;
+    }, 120);
+
+    let p = 0;
+    const barInterval = setInterval(()=>{
+      p += Math.random()*7 + 2;
+      if(p >= 100){
+        p = 100;
+        clearInterval(barInterval);
+        clearInterval(flashInterval);
+        flash.style.opacity = 0;
+        document.body.classList.remove('shake');
+        bigmsg.classList.remove('glitch');
+
+        // stays on this screen for good — siren and vibration keep going
+        // until the tab/site is actually closed, no reveal screen anymore
+      }
+      bar.style.width = p + '%';
+      pct.textContent = Math.floor(p) + '%';
+    }, 180);
+  });
+}
+
+window.addEventListener('load', ()=>{
+  tapstart.style.display = 'none';
+  startPrank();
+});
+// if the browser blocked autoplay audio, the first tap anywhere (handled above
+// by startSiren listeners) will kick the siren in without interrupting the visuals
+</script>
+</body>
+</html>
