@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
@@ -174,14 +173,14 @@ const pct = document.getElementById('pct');
 const flash = document.getElementById('flash');
 
 let audioCtx = null;
-let sirenNodes = null;
-let sirenRunning = false;
+let sirenBuilt = false;
 
-function startSiren(){
-  if(sirenRunning) return;
+// builds the audio graph once — the context may start "suspended" by the
+// browser's autoplay policy, that's expected and handled by unlockAudio()
+function buildSiren(){
+  if(sirenBuilt) return;
   try{
-    if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    if(audioCtx.state === 'suspended') audioCtx.resume();
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
     const masterGain = audioCtx.createGain();
     masterGain.gain.value = 0.5;
@@ -203,14 +202,11 @@ function startSiren(){
     osc1.start();
     osc2.start();
 
-    const now = audioCtx.currentTime;
-    // fast aggressive frequency sweep, looped for as long as the page stays open
-    let t = now;
-    let up = true;
-    osc1.frequency.setValueAtTime(700, t);
-    osc2.frequency.setValueAtTime(700, t);
+    osc1.frequency.setValueAtTime(700, audioCtx.currentTime);
+    osc2.frequency.setValueAtTime(700, audioCtx.currentTime);
 
-    const sweep = setInterval(()=>{
+    let up = true;
+    setInterval(()=>{
       const cur = audioCtx.currentTime;
       const target = up ? 1400 : 500;
       osc1.frequency.linearRampToValueAtTime(target, cur + 0.15);
@@ -218,27 +214,23 @@ function startSiren(){
       up = !up;
     }, 150);
 
-    sirenNodes = {osc1, osc2, sweep, masterGain};
-    sirenRunning = true;
-  }catch(e){ /* audio blocked by browser, will retry on first tap */ }
+    sirenBuilt = true;
+  }catch(e){ /* Web Audio unsupported, nothing we can do */ }
 }
 
-function stopSiren(){
-  if(!sirenRunning || !sirenNodes) return;
-  try{
-    clearInterval(sirenNodes.sweep);
-    sirenNodes.osc1.stop();
-    sirenNodes.osc2.stop();
-  }catch(e){}
-  sirenRunning = false;
+// browsers only allow audio to actually play after a real user gesture —
+// this runs on every click/touch (not just once) until it actually succeeds
+function unlockAudio(){
+  if(!sirenBuilt) buildSiren();
+  if(audioCtx && audioCtx.state === 'suspended'){
+    audioCtx.resume();
+  }
 }
 
-// try to start immediately when the page loads
-window.addEventListener('load', startSiren);
-// most mobile browsers block audio without a tap first — this catches the
-// very first touch/click anywhere on the page as a fallback
-document.addEventListener('click', startSiren, {once:true});
-document.addEventListener('touchstart', startSiren, {once:true});
+window.addEventListener('load', buildSiren);
+document.addEventListener('click', unlockAudio);
+document.addEventListener('touchstart', unlockAudio);
+document.addEventListener('keydown', unlockAudio);
 
 // ---- long continuous vibration (Android Chrome only — iOS Safari does not support the Vibration API) ----
 let vibeInterval = null;
